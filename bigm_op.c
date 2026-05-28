@@ -157,22 +157,34 @@ unique_array(bigm *a, int len)
 
 #if PG_VERSION_NUM >= 180000
 /*
- * This function is equivalent to isspace() but supports multibyte
- * characters and encoding. It was part of PostgreSQL 17 and earlier
- * but was removed in commit d3aad4ac57c. This version is copied
- * from PostgreSQL 17.
+ * Equivalent of isspace() with multibyte/encoding support.
+ *
+ * The original t_isspace() was removed from PostgreSQL in commit
+ * d3aad4ac57c (PG18). On PG18 we use the implementation copied from
+ * PG17. On PG19 the global `database_ctype_is_c` and the exported
+ * `char2wchar()` are gone, so we use the new pg_locale.h API
+ * (pg_database_locale() / pg_iswspace()) the same way PG19's own
+ * src/backend/tsearch/ts_locale.c does for t_isalnum / t_isalpha.
  */
 int
 t_isspace(const char *ptr)
 {
+#if PG_VERSION_NUM >= 190000
+	int			clen = pg_mblen(ptr);
+	pg_wchar	wstr[2];
+	pg_locale_t mylocale = pg_database_locale();
+
+	if (clen == 1 || mylocale->ctype_is_c)
+		return isspace(TOUCHAR(ptr));
+
+	pg_mb2wchar_with_len(ptr, wstr, clen);
+
+	return pg_iswspace(wstr[0], mylocale);
+#else
 #define WC_BUF_LEN  3
 	int			clen = pg_mblen(ptr);
 	wchar_t		character[WC_BUF_LEN];
-#if PG_VERSION_NUM >= 190000
-	locale_t mylocale = 0;	/* TODO */
-#else
 	pg_locale_t mylocale = 0;	/* TODO */
-#endif	/* PG_VERSION_NUM >= 190000 */
 
 	if (clen == 1 || database_ctype_is_c)
 		return isspace(TOUCHAR(ptr));
@@ -180,6 +192,7 @@ t_isspace(const char *ptr)
 	char2wchar(character, WC_BUF_LEN, ptr, clen, mylocale);
 
 	return iswspace((wint_t) character[0]);
+#endif	/* PG_VERSION_NUM >= 190000 */
 }
 #endif	/* PG_VERSION_NUM >= 180000 */
 
